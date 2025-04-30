@@ -252,6 +252,10 @@ pub struct CompressorBuilder {
 impl CompressorBuilder {
     /// Create a new builder.
     pub fn new() -> Self {
+        Self::with_seed(0)
+    }
+
+    pub fn with_seed(seed: u64) -> Self {
         // NOTE: `vec!` has a specialization for building a new vector of `0u64`. Because Symbol and u64
         //  have the same bit pattern, we can allocate as u64 and transmute. If we do `vec![Symbol::EMPTY; N]`,
         // that will create a new Vec and call `Symbol::EMPTY.clone()` `N` times which is considerably slower.
@@ -266,7 +270,7 @@ impl CompressorBuilder {
             len_histogram: [0; 8],
             codes_two_byte: Vec::with_capacity(65_536),
             codes_one_byte: Vec::with_capacity(512),
-            lossy_pht: LossyPHT::new(),
+            lossy_pht: LossyPHT::new(seed),
         };
 
         // Populate the escape byte entries.
@@ -528,7 +532,11 @@ const FSST_SAMPLELINE: usize = 512;
 ///
 /// SAFETY: sample_buf must be >= FSST_SAMPLEMAX bytes long. Providing something less may cause unexpected failures.
 #[allow(clippy::ptr_arg)]
-fn make_sample<'a, 'b: 'a>(sample_buf: &'a mut Vec<u8>, str_in: &Vec<&'b [u8]>) -> Vec<&'a [u8]> {
+fn make_sample<'a, 'b: 'a>(
+    sample_buf: &'a mut Vec<u8>,
+    str_in: &Vec<&'b [u8]>,
+    seed: u64,
+) -> Vec<&'a [u8]> {
     assert!(
         sample_buf.capacity() >= FSST_SAMPLEMAX,
         "sample_buf.len() < FSST_SAMPLEMAX"
@@ -541,12 +549,12 @@ fn make_sample<'a, 'b: 'a>(sample_buf: &'a mut Vec<u8>, str_in: &Vec<&'b [u8]>) 
         return str_in.clone();
     }
 
-    let mut sample_rnd = fsst_hash(4637947);
+    let mut sample_rnd = fsst_hash(4637947, seed);
     let sample_lim = FSST_SAMPLETARGET;
     let mut sample_buf_offset: usize = 0;
 
     while sample_buf_offset < sample_lim {
-        sample_rnd = fsst_hash(sample_rnd);
+        sample_rnd = fsst_hash(sample_rnd, seed);
         let line_nr = (sample_rnd as usize) % str_in.len();
 
         // Find the first non-empty chunk starting at line_nr, wrapping around if
@@ -560,7 +568,7 @@ fn make_sample<'a, 'b: 'a>(sample_buf: &'a mut Vec<u8>, str_in: &Vec<&'b [u8]>) 
         };
 
         let chunks = 1 + ((line.len() - 1) / FSST_SAMPLELINE);
-        sample_rnd = fsst_hash(sample_rnd);
+        sample_rnd = fsst_hash(sample_rnd, seed);
         let chunk = FSST_SAMPLELINE * ((sample_rnd as usize) % chunks);
 
         let len = FSST_SAMPLELINE.min(line.len() - chunk);
@@ -583,8 +591,8 @@ fn make_sample<'a, 'b: 'a>(sample_buf: &'a mut Vec<u8>, str_in: &Vec<&'b [u8]>) 
 ///
 /// This is equivalent to the FSST_HASH macro from the C++ implementation.
 #[inline]
-pub(crate) fn fsst_hash(value: u64) -> u64 {
-    value.wrapping_mul(2971215073) ^ value.wrapping_shr(15)
+pub(crate) fn fsst_hash(value: u64, seed: u64) -> u64 {
+    seed ^ value.wrapping_mul(2971215073) ^ value.wrapping_shr(15)
 }
 
 impl Compressor {
@@ -598,7 +606,11 @@ impl Compressor {
     ///
     /// [FSST paper]: https://www.vldb.org/pvldb/vol13/p2649-boncz.pdf
     pub fn train(values: &Vec<&[u8]>) -> Self {
-        let mut builder = CompressorBuilder::new();
+        Self::train_with_seed(values, 0)
+    }
+
+    pub fn train_with_seed(values: &Vec<&[u8]>, seed: u64) -> Self {
+        let mut builder = CompressorBuilder::with_seed(seed);
 
         if values.is_empty() {
             return builder.build();
@@ -606,10 +618,10 @@ impl Compressor {
 
         let mut counters = Counter::new();
         let mut sample_memory = Vec::with_capacity(FSST_SAMPLEMAX);
-        let sample = make_sample(&mut sample_memory, values);
+        let sample = make_sample(&mut sample_memory, values, seed);
         for sample_frac in GENERATIONS {
             for (i, line) in sample.iter().enumerate() {
-                if sample_frac < 128 && ((fsst_hash(i as u64) & 127) as usize) > sample_frac {
+                if sample_frac < 128 && ((fsst_hash(i as u64, seed) & 127) as usize) > sample_frac {
                     continue;
                 }
 

@@ -54,11 +54,12 @@ impl TableEntry {
 pub(crate) struct LossyPHT {
     /// Hash table slots. Used for strings that are 3 bytes or more.
     slots: Vec<TableEntry>,
+    seed: u64,
 }
 
 impl LossyPHT {
     /// Construct a new empty lossy perfect hash table
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(seed: u64) -> Self {
         let slots = vec![
             TableEntry {
                 symbol: Symbol::ZERO,
@@ -68,7 +69,7 @@ impl LossyPHT {
             HASH_TABLE_SIZE
         ];
 
-        Self { slots }
+        Self { slots, seed }
     }
 
     /// Try and insert the (symbol, code) pair into the table.
@@ -80,7 +81,7 @@ impl LossyPHT {
     /// True if the symbol was inserted into the table, false if it was rejected due to collision.
     pub(crate) fn insert(&mut self, symbol: Symbol, len: usize, code: u8) -> bool {
         let prefix_3bytes = symbol.as_u64() & 0xFF_FF_FF;
-        let slot = fsst_hash(prefix_3bytes) as usize & (HASH_TABLE_SIZE - 1);
+        let slot = fsst_hash(prefix_3bytes, self.seed) as usize & (HASH_TABLE_SIZE - 1);
         let entry = &mut self.slots[slot];
         if !entry.is_unused() {
             false
@@ -107,22 +108,22 @@ impl LossyPHT {
     /// Remove the symbol from the hashtable, if it exists.
     pub(crate) fn remove(&mut self, symbol: Symbol) {
         let prefix_3bytes = symbol.as_u64() & 0xFF_FF_FF;
-        let slot = fsst_hash(prefix_3bytes) as usize & (HASH_TABLE_SIZE - 1);
+        let slot = fsst_hash(prefix_3bytes, self.seed) as usize & (HASH_TABLE_SIZE - 1);
         self.slots[slot].code = Code::UNUSED;
     }
 
     #[inline]
     pub(crate) fn lookup(&self, word: u64) -> &TableEntry {
         let prefix_3bytes = word & 0xFF_FF_FF;
-        let slot = fsst_hash(prefix_3bytes) as usize & (HASH_TABLE_SIZE - 1);
+        let slot = fsst_hash(prefix_3bytes, self.seed) as usize & (HASH_TABLE_SIZE - 1);
 
         // SAFETY: the slot is guaranteed to between [0, HASH_TABLE_SIZE).
         unsafe { self.slots.get_unchecked(slot) }
     }
 }
 
-impl Default for LossyPHT {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+// impl Default for LossyPHT {
+//     fn default() -> Self {
+//         Self::new(0)
+//     }
+// }

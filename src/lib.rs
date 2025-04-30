@@ -765,6 +765,14 @@ impl Compressor {
     ///
     /// This will not attempt to optimize or re-order the codes.
     pub fn rebuild_from(symbols: impl AsRef<[Symbol]>, symbol_lens: impl AsRef<[u8]>) -> Self {
+        Self::rebuild_with_seed(symbols, symbol_lens, 0)
+    }
+
+    pub fn rebuild_with_seed(
+        symbols: impl AsRef<[Symbol]>,
+        symbol_lens: impl AsRef<[u8]>,
+        seed: u64,
+    ) -> Self {
         let symbols = symbols.as_ref();
         let symbol_lens = symbol_lens.as_ref();
 
@@ -783,7 +791,7 @@ impl Compressor {
         // Insert the symbols in their given order into the FSST lookup structures.
         let symbols = symbols.to_vec();
         let lengths = symbol_lens.to_vec();
-        let mut lossy_pht = LossyPHT::new();
+        let mut lossy_pht = LossyPHT::new(seed);
 
         let mut codes_one_byte = vec![Code::UNUSED; 256];
 
